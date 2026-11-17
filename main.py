@@ -14,6 +14,7 @@ from src import (
     MovieUploadInfo,
     MovieDataResponse,
     MovieProcessingReport,
+    MovieCache,
 )
 from src.storage import MOVIE_COLUMNS
 
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Data Processing API", version="1.0.0")
 app.middleware("http")(log_requests)
 storage = MovieStorage()
+cache = MovieCache()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -61,7 +63,6 @@ async def upload_movies(file: UploadFile = File(...)):
             detail="Could not read the file.",
         )
 
-    # Quick validation before saving
     if len(df.columns) != len(MOVIE_COLUMNS) or set(df.columns) != set(MOVIE_COLUMNS):
         raise HTTPException(
             status_code=400,
@@ -73,10 +74,10 @@ async def upload_movies(file: UploadFile = File(...)):
             detail="CSV must contain at least one data row.",
         )
 
-    # Reorder columns so they line up with the INSERT statement
     df = df[MOVIE_COLUMNS]
 
     storage.save(df)
+    cache.invalidate()
     logger.info("Uploaded movies: filename=%s, rows=%d", filename, len(df))
 
     return MovieUploadInfo(
@@ -90,14 +91,22 @@ async def upload_movies(file: UploadFile = File(...)):
 @app.get("/movies", response_model=MovieDataResponse)
 def get_movies(limit: int = Query(default=100, ge=1)):
     """Return up to limit stored movies and the total count."""
+    cached = cache.get(limit)
+    if cached is not None:
+        logger.info("Returned cached movies: limit=%d", limit)
+        return cached
+
     total_rows = storage.count_movies()
     if total_rows == 0:
-        return {"data": [], "total_rows": 0}
+        data = []
+    else:
+        data = storage.select_columns(MOVIE_COLUMNS, limit)
 
-    data = storage.select_columns(MOVIE_COLUMNS, limit)
+    response = {"data": data, "total_rows": total_rows}
+    cache.set(limit, response)
 
-    logger.info("Returned %d rows from movies", len(data))
-    return {"data": data, "total_rows": total_rows}
+    logger.info("Retrieved movies: returned_rows=%d", len(data))
+    return response
 
 
 @app.get("/movies/search", response_model=list[dict])
@@ -158,8 +167,8 @@ def process_movies(config: ProcessConfig):
 
     cleaning_report = create_cleaning_report(validated_copy, processed_df)
 
-    # Replace the stored collection with the processed data
     storage.save(processed_df)
+    cache.invalidate()
 
     logger.info(
         "Processed movies: validation_removed=%d, rows_before=%d, rows_after=%d",

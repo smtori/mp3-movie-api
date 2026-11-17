@@ -6,6 +6,7 @@ import pandas as pd
 from .database import get_connection, initialize_database
 
 logger = logging.getLogger(__name__)
+
 MOVIE_COLUMNS = ["title", "release_year", "rating", "genre"]
 
 
@@ -16,37 +17,37 @@ class MovieStorage:
 
     def save(self, df):
         """Replace all movie rows in one transaction."""
-        clean = df.astype(object).where(df.notna(), None)
-        rows = list(clean.itertuples(index=False, name=None))
+        # Convert missing values to Python None for SQL NULL.
+        clean_df = df[MOVIE_COLUMNS].astype(object).where(df[MOVIE_COLUMNS].notna(), None)
+        rows = list(clean_df.itertuples(index=False, name=None))
 
         connection = get_connection(self.db_path)
-
         try:
-            # Delete all old rows
             connection.execute("DELETE FROM movies")
-
-            # Insert all new rows
             connection.executemany(
                 "INSERT INTO movies (title, release_year, rating, genre) VALUES (?, ?, ?, ?)",
                 rows,
             )
-            # commit
             connection.commit()
-            # log at debug
-            logger.debug(f"Stored movies in SQLite: rows={len(rows)}")
+        except sqlite3.Error:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
-        def get(self):
-            """Return the four movie columns as a DataFrame, ordered by id."""
-            query = "SELECT title, release_year, rating, genre FROM movies ORDER BY id"
-            connection = get_connection(self.db_path)
-            try:
-                rows = connection.execute(query).fetchall()
-            finally:
-                connection.close()
+        logger.debug("Stored movies in SQLite: rows=%d", len(rows))
 
-            return pd.DataFrame([tuple(row) for row in rows], columns=MOVIE_COLUMNS)
+    def get(self):
+        """Return the four movie columns as a DataFrame, ordered by id."""
+        connection = get_connection(self.db_path)
+        try:
+            rows = connection.execute(
+                "SELECT title, release_year, rating, genre FROM movies ORDER BY id"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return pd.DataFrame([tuple(row) for row in rows], columns=MOVIE_COLUMNS)
 
     def select_columns(self, columns, limit=5):
         """Return id plus the requested movie columns, ordered by id."""
@@ -62,12 +63,13 @@ class MovieStorage:
         selected_columns = ", ".join(["id"] + columns)
         connection = get_connection(self.db_path)
         try:
-            query = f"SELECT {selected_columns} FROM movies ORDER BY id LIMIT ?"
-            rows = connection.execute(query, (limit,)).fetchall()
-
-            result = [dict(row) for row in rows]
-            logger.debug(f"Selected columns={columns}, rows={len(result)}")
-            return result
+            rows = connection.execute(
+                f"SELECT {selected_columns} FROM movies ORDER BY id LIMIT ?",
+                (limit,),
+            ).fetchall()
+            results = [dict(row) for row in rows]
+            logger.debug("Selected movies: columns=%s, rows=%d", columns, len(results))
+            return results
         finally:
             connection.close()
 
@@ -92,18 +94,14 @@ class MovieStorage:
 
         selected_columns = ", ".join(["id"] + columns)
         connection = get_connection(self.db_path)
-
         try:
-            query = f"SELECT {selected_columns} FROM movies WHERE rating >= ? ORDER BY rating DESC, id ASC LIMIT ?"
-            rows = connection.execute(query, (min_rating, limit)).fetchall()
-
-            # Return dictionaries and log the selected columns and row count at DEBUG.
-            result = [dict(row) for row in rows]
-            logger.debug(
-                f"Queried movies: columns={columns}, min_rating={min_rating}, "
-                f"returned_rows={len(result)}"
-            )
-
-            return result
+            rows = connection.execute(
+                f"SELECT {selected_columns} FROM movies "
+                "WHERE rating >= ? ORDER BY rating DESC, id ASC LIMIT ?",
+                (min_rating, limit),
+            ).fetchall()
+            results = [dict(row) for row in rows]
+            logger.debug("Queried movies: columns=%s, rows=%d", columns, len(results))
+            return results
         finally:
             connection.close()

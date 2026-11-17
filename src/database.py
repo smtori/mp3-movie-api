@@ -8,19 +8,15 @@ def get_connection(db_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
-
     return connection
 
 
 def initialize_database(db_path):
     """Create the movie table if it does not exist."""
     connection = get_connection(db_path)
-    
     try:
-        cursor = connection.cursor()
-        
-        # Initialize table
-        cursor.execute("""
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS movies (
                 id INTEGER PRIMARY KEY,
                 title TEXT,
@@ -28,7 +24,8 @@ def initialize_database(db_path):
                 rating REAL,
                 genre TEXT
             )
-            """)
+            """
+        )
         connection.commit()
     finally:
         connection.close()
