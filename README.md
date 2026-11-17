@@ -1,7 +1,5 @@
 # mp3-movie-api
 
-# mp3-movie-api
-
 This project is a FastAPI service that stores a single movie collection in SQLite, cleans it with the MP1 data pipeline, and caches repeated retrievals. `main.py` defines the endpoints, while the `src/` package holds the request/response models, logging middleware, the SQLite connection and table setup (`database.py`), the SQL-based `MovieStorage` class (`storage.py`), and the FakeRedis-backed `MovieCache` (`cache.py`). The `data_pipeline/` package contains the reused MP1 validation and cleaning functions. `POST /upload` checks that a CSV has exactly the columns `title`, `release_year`, `rating`, and `genre`, then replaces every stored row in one SQLite transaction, so the data survives server restarts. `GET /movies` returns up to `limit` rows plus the total count, and `GET /movies/search` filters and sorts by rating using SQL. `POST /movies/process` loads the stored rows into a DataFrame, validates and cleans them according to the request settings, and saves the result back to the database. Only `GET /movies` is cached, with one entry per `limit` that expires after 90 seconds. Every successful upload or processing run clears the whole cache so clients never receive outdated rows.
 
 ## Running
